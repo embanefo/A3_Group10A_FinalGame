@@ -26,7 +26,7 @@
   AIR spikes     hang down from AIR_SPIKE_Y →
                  safe on the ground, dangerous on
                  a platform. Jump over or drop off.
-*/
+
 
 // ── Canvas ───────────────────────────────────
 const CANVAS_W = screen.width;
@@ -488,3 +488,4 @@ function keyPressed() {
     state = "play";
   }
 }
+*/

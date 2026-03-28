@@ -1,490 +1,527 @@
-/*
-  sketch.js
-  ─────────────────────────────────────────────
-  A2 Mid-Term Runner — Main Sketch
-  Course: GBDA302
+// A2 / A3 Starter Runner (Expanded Multi-Level Version)
+// Based on the simplified shapes-only runner
+// Added:
+// - level intro screen
+// - level completion flow
+// - stop spawning at target score
+// - let remaining obstacles clear
+// - level complete screen fades into binary choice screen
+// - choice advances to next level
+// - final game complete screen
 
-  This file owns:
-    • Global constants (canvas, physics, heights)
-    • Game-state variables (score, intensity, etc.)
-    • setup / draw / keyPressed
-    • Collision detection (Player ↔ Spikes)
-    • Screen-state machine: "start" → "play" → "lose"
-
-  To change how things LOOK or MOVE, edit the
-  matching class file instead of this one:
-    Player.js         — player physics & drawing
-    Spike.js          — single spike drawing (ground + air)
-    SpikeManager.js   — spawn rates, air spike chance
-    Platform.js       — single platform drawing
-    PlatformManager.js — spawn gaps, platform width
-    HUD.js            — all on-screen UI text & bars
-
-  ── How the two spike types work ─────────────
-  GROUND spikes  rise from the floor → jump or
-                 use a platform to get over them.
-  AIR spikes     hang down from AIR_SPIKE_Y →
-                 safe on the ground, dangerous on
-                 a platform. Jump over or drop off.
-*/
-
-// ── Canvas ───────────────────────────────────
-const CANVAS_W = screen.width;
+// --------------------------------------------------
+// Game constants
+// --------------------------------------------------
+const CANVAS_W = 700;
 const CANVAS_H = 300;
+const GROUND_Y = 230;
+const GRAVITY = 1.0;
+const JUMP_VELOCITY = -14;
 
-// ── World heights (edit here to rebalance) ───
-const GROUND = 230; // player.y (top) when standing on ground
-const PLATFORM_Y = 200; // top surface of elevated platforms
-// player.y on platform = PLATFORM_Y - player.h = 160
-const AIR_SPIKE_Y = 110; // y where air spikes start (tip hangs down from here)
-// air spike bottom reaches ~110+70 = 180
-// — above player on ground (230), hits player on platform (160-200)
+// Default fallback values in case a level is missing data
+const DEFAULT_TARGET_SCORE = 80;
+const DEFAULT_SPAWN_FRAMES = 90;
+const DEFAULT_OBSTACLE_SPEED = 6;
 
-// ── Intensity / boost constants ───────────────
-const MAX_INTENSITY = 100;
-const BOOST_DURATION = 200; // frames
+// Timing / transition constants
+const LEVEL_INTRO_DURATION = 90; // about 1.5 sec
+const LEVEL_COMPLETE_DURATION = 70; // hold before fading
+const CHOICE_FADE_SPEED = 6; // fade amount per frame
 
-// ── Asset variables ───────────────────────────
-let imgBg;
-let imgIdle; // pixil-gif-drawing (2).gif — before ENTER
-let imgRun; // pixil-gif-drawing (1).gif — playing/moving
-let imgBoost; // pixil-gif-drawing.gif     — boost mode
-let bgX = 0; // scrolling background x offset
-let raindrops = []; // rain particles (active during shake)
+// --------------------------------------------------
+// External level data
+// IMPORTANT:
+// LEVELS should exist in another file, for example:
+//
+// const LEVELS = [
+//   { name: "Level 1", targetScore: 80, spawnRate: 90, speed: 6 },
+//   { name: "Level 2", targetScore: 90, spawnRate: 75, speed: 7 },
+//   { name: "Level 3", targetScore: 100, spawnRate: 65, speed: 8 }
+// ];
+// --------------------------------------------------
 
-// ── Game-state variables ─────────────────────
+// --------------------------------------------------
+// Game state
+// --------------------------------------------------
 let state = "start";
-let startScreen = "title";
+// possible states:
+// "start"
+// "levelIntro"
+// "play"
+// "levelComplete"
+// "choice"
+// "lose"
+// "gameComplete"
 
 let player;
-let spikeManager;
-let platformManager;
-let hud;
+let obstacles = [];
 
-let score = 0;
-let intensity = 0;
-let streak = 0;
+let score = 0; // score for current level
+let totalScore = 0; // optional total score across all levels
+let currentLevel = 0;
+let lastChoice = null; // "up" or "down"
 
-let boostActive = false;
-let boostTimer = 0;
+// Level flow flags
+let stopSpawning = false;
+let introTimer = 0;
+let completeTimer = 0;
+let fadeAlpha = 0;
 
-let hearts = 5.0; // 5 full hearts (each spike hit costs 0.5 hearts)
-let hitCooldown = 0;
+// Active level settings
+let activeTargetScore = DEFAULT_TARGET_SCORE;
+let activeSpawnFrames = DEFAULT_SPAWN_FRAMES;
+let activeObstacleSpeed = DEFAULT_OBSTACLE_SPEED;
 
-let misses = 0; // spike hits since last recovery
-let shakeActive = false; // screen shakes when player is struggling
-let shakeSuccess = 0; // spikes cleared during shake (need 5 to recover)
-
-// ── p5 preload ────────────────────────────────
-function preload() {
-  imgBg = loadImage("assets/10_17.png");
-  imgIdle = loadImage("assets/standing-skin.gif");
-  imgRun = loadImage("assets/running-skin.gif");
-  imgBoost = loadImage("assets/booster-skin.gif");
-}
-
-// ── p5 setup ─────────────────────────────────
+// --------------------------------------------------
+// p5 setup
+// --------------------------------------------------
 function setup() {
   createCanvas(CANVAS_W, CANVAS_H);
-  frameRate(60);
-
-  player = new Player();
-  spikeManager = new SpikeManager();
-  platformManager = new PlatformManager();
-  hud = new HUD();
-
-  resetGame();
+  resetEntireGame();
 }
 
-// ── Full game reset ───────────────────────────
-function resetGame() {
-  player.reset();
-  spikeManager.reset();
-  platformManager.reset();
+// --------------------------------------------------
+// Full game reset
+// --------------------------------------------------
+function resetEntireGame() {
+  player = {
+    x: 90,
+    y: GROUND_Y,
+    w: 40,
+    h: 40,
+    vy: 0,
+    onGround: true,
+  };
 
+  obstacles = [];
   score = 0;
-  intensity = 0;
-  streak = 0;
+  totalScore = 0;
+  currentLevel = 0;
+  lastChoice = null;
 
-  boostActive = false;
-  boostTimer = 0;
+  stopSpawning = false;
+  introTimer = 0;
+  completeTimer = 0;
+  fadeAlpha = 0;
 
-  hearts = 5.0;
-  hitCooldown = 0;
-
-  misses = 0;
-  shakeActive = false;
-  shakeSuccess = 0;
-
-  bgX = 0;
-  raindrops = [];
-
-  startScreen = "title";
+  loadCurrentLevelSettings();
 }
 
-// ── Main draw loop ────────────────────────────
+// --------------------------------------------------
+// Per-level reset
+// --------------------------------------------------
+function resetLevelObjects() {
+  player.x = 90;
+  player.y = GROUND_Y;
+  player.w = 40;
+  player.h = 40;
+  player.vy = 0;
+  player.onGround = true;
+
+  obstacles = [];
+  score = 0;
+  stopSpawning = false;
+  completeTimer = 0;
+  fadeAlpha = 0;
+}
+
+// --------------------------------------------------
+// Pull settings from LEVELS
+// Assumes LEVELS exists elsewhere
+// --------------------------------------------------
+function loadCurrentLevelSettings() {
+  const level = LEVELS[currentLevel] || {};
+
+  activeTargetScore = level.targetScore ?? DEFAULT_TARGET_SCORE;
+  activeSpawnFrames = level.spawnRate ?? DEFAULT_SPAWN_FRAMES;
+  activeObstacleSpeed = level.speed ?? DEFAULT_OBSTACLE_SPEED;
+}
+
+// --------------------------------------------------
+// Start current level
+// --------------------------------------------------
+function beginLevel(levelIndex) {
+  currentLevel = levelIndex;
+  loadCurrentLevelSettings();
+  resetLevelObjects();
+
+  introTimer = LEVEL_INTRO_DURATION;
+  state = "levelIntro";
+}
+
+// --------------------------------------------------
+// Go to next level after choice
+// --------------------------------------------------
+function advanceToNextLevel() {
+  currentLevel++;
+
+  if (currentLevel >= LEVELS.length) {
+    state = "gameComplete";
+    return;
+  }
+
+  beginLevel(currentLevel);
+}
+
+// --------------------------------------------------
+// Main draw loop
+// --------------------------------------------------
 function draw() {
   background(245);
+  drawGround();
 
-  // ── Scrolling background ──────────────────
-  if (state === "play") {
-    let bgSpeed = map(intensity, 0, MAX_INTENSITY, 0.5, 2);
-    if (shakeActive) bgSpeed *= 1.25;
-    bgX -= bgSpeed;
-  }
-
-  // Draw tiled background to cover entire canvas
-  if (imgBg) {
-    let imgW = imgBg.width;
-    let x = bgX % imgW;
-    if (x > 0) x -= imgW; // start from left edge
-
-    // Draw image tiles to cover full width
-    for (let i = 0; i * imgW < width + imgW; i++) {
-      image(imgBg, x + i * imgW, 0, imgW, CANVAS_H);
-    }
-  }
-
-  // ── Dark blue shake overlay ───────────────
-  if (shakeActive) {
-    noStroke();
-    fill(10, 20, 80, 140);
-    rect(0, 0, width, height);
-  }
-
-  // ── Rain (only during shake) ──────────────
-  updateAndDrawRain();
-
-  // Ground line
-  stroke(40);
-  line(0, GROUND + player.h, width, GROUND + player.h);
-  noStroke();
-
-  // ── Start screen ──────────────────────────
   if (state === "start") {
-    platformManager.draw();
-    player.draw(false, imgIdle);
-
-    // ── Title sub-screen ───────────────────
-    if (startScreen === "title") {
-      // Dark overlay
-      fill(0, 0, 0, 200);
-      rect(0, 0, width, height);
-
-      textAlign(CENTER);
-
-      // Game title
-      fill(255, 220, 50);
-      textSize(100);
-      textStyle(BOLD);
-      text("Between Floors", width / 2, height / 2 + 10);
-
-      // Divider line
-      stroke(255, 255, 255, 80);
-      line(width / 2 - 120, height / 2 + 30, width / 2 + 120, height / 2 + 30);
-      noStroke();
-
-      // Prompts
-      fill(255);
-      textSize(16);
-      text("ENTER — Start Game", width / 2, height / 2 + 57);
-
-      fill(180);
-      textSize(13);
-      text("I — Instructions", width / 2, height / 2 + 80);
-    }
-
-    // ── Instructions sub-screen ────────────
-    if (startScreen === "instructions") {
-      // Dark overlay
-      fill(0, 0, 0, 200);
-      rect(0, 0, width, height);
-
-      textAlign(CENTER);
-
-      // Header
-      fill(255, 220, 50);
-      textSize(22);
-      textStyle(BOLD);
-      text("HOW TO PLAY", width / 2, 52);
-      textStyle(NORMAL);
-
-      // Divider
-      stroke(255, 255, 255, 60);
-      line(width / 2 - 140, 62, width / 2 + 140, 62);
-      noStroke();
-
-      // Controls
-      fill(160, 210, 255);
-      textSize(13);
-      text("CONTROLS", width / 2, 82);
-
-      fill(255);
-      textSize(13);
-      text(
-        "SPACE — Jump     |     R — Restart     |     DOUBLE SPACE - Double Jump",
-        width / 2,
-        100,
-      );
-
-      // Divider
-      stroke(255, 255, 255, 40);
-      line(width / 2 - 120, 112, width / 2 + 120, 112);
-      noStroke();
-
-      // Rules
-      fill(160, 210, 255);
-      textSize(13);
-      text("RULES", width / 2, 130);
-
-      fill(255);
-      textSize(12);
-      text("Dodge spikes by jumping over them.", width / 2, 150);
-
-      fill(255, 130, 130);
-      text(
-        "Black hanging spikes are dangerous when you're on a platform!",
-        width / 2,
-        186,
-      );
-
-      fill(255);
-      text("Clear 5 spikes in a row to activate a JUMP BOOST!", width / 2, 204);
-      text(
-        "If you hit a spike you enter SHAKE MODE! Clear 5 spikes to recover.",
-        width / 2,
-        222,
-      );
-      text(
-        "You have 5 hearts. Hit a spike and lose 1 heart. Reach 0 and it's game over.",
-        width / 2,
-        240,
-      );
-
-      // Back prompt
-      fill(180);
-      textSize(12);
-      text("B — Back to Title     |     ENTER — Start Game", width / 2, 270);
-    }
-
+    drawStartScreen();
     return;
   }
 
-  // ── Play screen ───────────────────────────
+  if (state === "levelIntro") {
+    drawPlayer();
+    drawLevelIntroScreen();
+
+    introTimer--;
+    if (introTimer <= 0) {
+      state = "play";
+    }
+    return;
+  }
+
   if (state === "play") {
-    // Slowly raise intensity over time
-    intensity = constrain(intensity + 0.04, 0, MAX_INTENSITY);
+    updatePlayer();
+    updateObstacles();
+    checkCollisions();
+    checkLevelProgress();
 
-    // Boost timer countdown
-    if (boostActive) {
-      boostTimer--;
-      if (boostTimer <= 0) boostActive = false;
-    }
-
-    if (hitCooldown > 0) hitCooldown--;
-
-    // ── Compute shared scroll speed ────────
-    let gameSpeed = 8 + map(intensity, 0, MAX_INTENSITY, 0, 3);
-    if (shakeActive) gameSpeed *= 1.25; // speed up during shake for extra pressure
-    // change this back to 8 after showcase
-
-    // ── Update game objects ─────────────────
-    player.update(intensity, MAX_INTENSITY, platformManager.platforms);
-    spikeManager.update(gameSpeed, intensity, MAX_INTENSITY);
-    platformManager.update(gameSpeed);
-
-    // ── Collision checks ────────────────────
-    checkNearMiss();
-    checkScore();
-    checkCollision();
-
-    // ── Draw (with optional screen-shake) ──
-    push();
-    if (shakeActive) translate(random(-4, 4), random(-4, 4));
-    platformManager.draw();
-    spikeManager.draw(intensity, MAX_INTENSITY);
-    player.draw(boostActive, boostActive ? imgBoost : imgRun);
-    pop();
-
-    hud.draw(
-      score,
-      intensity,
-      MAX_INTENSITY,
-      hearts,
-      streak,
-      boostActive,
-      shakeActive,
-    );
-  }
-
-  // ── Lose screen ───────────────────────────
-  if (state === "lose") {
-    platformManager.draw();
-    spikeManager.draw(intensity, MAX_INTENSITY);
-    player.draw(false, imgRun);
-    fill(0, 0, 0, 120);
-    rect(0, 0, width, height);
-
-    textAlign(CENTER);
-    fill(255);
-    textSize(28);
-    text("GAME OVER", width / 2, height / 2 - 10);
-    textSize(18);
-    text(
-      "Score: " + score + "   |   Press R to Restart",
-      width / 2,
-      height / 2 + 22,
-    );
-  }
-}
-
-// ── Rain effect (active during shake) ────────
-// Spawns diagonal blue raindrops each frame,
-// moves them, then culls ones that left the screen.
-function updateAndDrawRain() {
-  if (!shakeActive) {
-    raindrops = [];
+    drawHUD();
+    drawPlayer();
+    drawObstacles();
     return;
   }
 
-  // Spawn a few new drops each frame
-  for (let i = 0; i < 5; i++) {
-    raindrops.push({
-      x: random(width),
-      y: random(-20, 0),
-      speed: random(8, 14),
-      len: random(10, 20),
-      alpha: random(100, 200),
-    });
+  if (state === "levelComplete") {
+    drawPlayer();
+    drawObstacles();
+    drawLevelCompleteScreen();
+
+    completeTimer--;
+    if (completeTimer <= 0) {
+      state = "choice";
+      fadeAlpha = 0;
+    }
+    return;
   }
 
-  // Move and draw existing drops
-  for (let d of raindrops) {
-    d.y += d.speed;
-    d.x -= 1.5;
-    stroke(150, 180, 255, d.alpha);
-    strokeWeight(1);
-    line(d.x, d.y, d.x + 2, d.y + d.len);
+  if (state === "choice") {
+    drawPlayer();
+    drawChoiceScreen();
+    return;
   }
 
-  // Cull drops that fell off the bottom
-  raindrops = raindrops.filter((d) => d.y < height);
+  if (state === "lose") {
+    drawPlayer();
+    drawObstacles();
+    drawLoseScreen();
+    return;
+  }
+
+  if (state === "gameComplete") {
+    drawPlayer();
+    drawGameCompleteScreen();
+    return;
+  }
 }
 
-// ── Collision: player hits a spike ───────────
-// Hitting a spike 3 times triggers shake.
-// Hearts are ONLY lost during the shake period.
-function checkCollision() {
-  if (hitCooldown > 0) return;
+// --------------------------------------------------
+// Drawing helpers
+// --------------------------------------------------
+function drawGround() {
+  stroke(40);
+  strokeWeight(2);
+  line(0, GROUND_Y + player.h, width, GROUND_Y + player.h);
 
-  for (const s of spikeManager.spikes) {
-    const overlapX = player.x + player.w > s.x + 4 && player.x < s.x + s.w - 4;
-    if (!overlapX) continue;
+  strokeWeight(3);
+  for (let x = 0; x < width; x += 50) {
+    line(x, GROUND_Y + player.h + 20, x + 25, GROUND_Y + player.h + 20);
+  }
+}
 
-    let hit = false;
+function drawPlayer() {
+  noStroke();
+  fill(30, 120, 255);
+  rect(player.x, player.y, player.w, player.h, 8);
+}
 
-    if (s.type === "ground") {
-      const playerFeet = player.y + player.h;
-      if (playerFeet > s.y + 8) hit = true;
-    } else {
-      const playerTop = player.y;
-      const spikeBase = s.y + s.h;
-      if (playerTop < spikeBase - 8 && player.y + player.h > s.y) hit = true;
+function drawObstacles() {
+  noStroke();
+  fill(30);
+
+  for (const o of obstacles) {
+    rect(o.x, o.y, o.w, o.h, 6);
+  }
+}
+
+function drawHUD() {
+  noStroke();
+  fill(0);
+  textAlign(LEFT, TOP);
+  textSize(14);
+
+  text(`Level: ${currentLevel + 1}`, 12, 12);
+  text(`Score: ${score}`, 12, 30);
+  text(`Target: ${activeTargetScore}`, 12, 48);
+}
+
+function drawStartScreen() {
+  noStroke();
+  fill(0);
+  textAlign(CENTER, CENTER);
+
+  textSize(28);
+  text("Runner Prototype", width / 2, height / 2 - 40);
+
+  textSize(15);
+  text("Press SPACE to jump", width / 2, height / 2);
+  text("Press ENTER to start", width / 2, height / 2 + 24);
+
+  drawPlayer();
+}
+
+function drawLevelIntroScreen() {
+  const level = LEVELS[currentLevel] || {};
+  const levelName = level.name || `Level ${currentLevel + 1}`;
+
+  fill(0, 0, 0, 170);
+  rect(0, 0, width, height);
+
+  textAlign(CENTER, CENTER);
+  fill(255);
+
+  textSize(30);
+  text(levelName, width / 2, height / 2 - 14);
+
+  textSize(15);
+  text(`Target Score: ${activeTargetScore}`, width / 2, height / 2 + 22);
+}
+
+function drawLevelCompleteScreen() {
+  fill(0, 0, 0, 170);
+  rect(0, 0, width, height);
+
+  textAlign(CENTER, CENTER);
+  fill(255);
+
+  textSize(28);
+  text("LEVEL COMPLETE", width / 2, height / 2 - 14);
+
+  textSize(15);
+  text(`Level ${currentLevel + 1} Cleared`, width / 2, height / 2 + 18);
+}
+
+function drawChoiceScreen() {
+  // fade in dark overlay
+  fadeAlpha = min(fadeAlpha + CHOICE_FADE_SPEED, 190);
+
+  fill(0, 0, 0, fadeAlpha);
+  rect(0, 0, width, height);
+
+  textAlign(CENTER, CENTER);
+  fill(255);
+
+  textSize(26);
+  text("Choose Your Path", width / 2, 70);
+
+  textSize(14);
+  text("Press W / UP for UP", width / 2, 100);
+  text("Press S / DOWN for DOWN", width / 2, 120);
+
+  // Up button
+  fill(70, 140, 255);
+  rect(width / 2 - 180, 145, 140, 85, 12);
+  fill(255);
+  textSize(24);
+  text("UP", width / 2 - 110, 188);
+
+  // Down button
+  fill(255, 110, 110);
+  rect(width / 2 + 40, 145, 140, 85, 12);
+  fill(255);
+  text("DOWN", width / 2 + 110, 188);
+
+  textSize(13);
+  text(
+    "Your choice can be used later for narrative or level variation.",
+    width / 2,
+    265,
+  );
+}
+
+function drawLoseScreen() {
+  fill(0, 0, 0, 150);
+  rect(0, 0, width, height);
+
+  textAlign(CENTER, CENTER);
+  fill(255);
+
+  textSize(28);
+  text("GAME OVER", width / 2, height / 2 - 20);
+
+  textSize(15);
+  text(`Level Reached: ${currentLevel + 1}`, width / 2, height / 2 + 10);
+  text("Press R to restart", width / 2, height / 2 + 34);
+}
+
+function drawGameCompleteScreen() {
+  fill(0, 0, 0, 170);
+  rect(0, 0, width, height);
+
+  textAlign(CENTER, CENTER);
+  fill(255);
+
+  textSize(30);
+  text("YOU FINISHED ALL LEVELS!", width / 2, height / 2 - 22);
+
+  textSize(15);
+  text(`Total Score: ${totalScore}`, width / 2, height / 2 + 10);
+  text("Press R to restart the full game", width / 2, height / 2 + 36);
+}
+
+// --------------------------------------------------
+// Updates
+// --------------------------------------------------
+function updatePlayer() {
+  player.vy += GRAVITY;
+  player.y += player.vy;
+
+  const groundTop = GROUND_Y;
+
+  if (player.y >= groundTop) {
+    player.y = groundTop;
+    player.vy = 0;
+    player.onGround = true;
+  } else {
+    player.onGround = false;
+  }
+}
+
+function updateObstacles() {
+  // Spawn new obstacles only while spawning is allowed
+  if (!stopSpawning && frameCount % activeSpawnFrames === 0) {
+    spawnObstacle();
+  }
+
+  // Move obstacles
+  for (const o of obstacles) {
+    o.x -= activeObstacleSpeed;
+  }
+
+  // Score passed obstacles
+  for (const o of obstacles) {
+    if (!o.passed && o.x + o.w < player.x) {
+      o.passed = true;
+      score += 10;
+      totalScore += 10;
     }
+  }
 
-    if (hit) {
-      //s.scored = true;
-      hitCooldown = 15;
+  // Remove off-screen obstacles
+  obstacles = obstacles.filter((o) => o.x + o.w > 0);
+}
 
-      if (shakeActive) {
-        // During shake: every hit costs 1 heart
-        hearts -= 1;
-        if (hearts <= 0) {
-          state = "lose";
-          return;
-        }
-      } else {
-        // Outside shake: just trigger shake, no heart loss
-        shakeActive = true;
-        shakeSuccess = 0;
-        boostActive = false;
-        boostTimer = 0;
-      }
+function spawnObstacle() {
+  const w = random(15, 25);
+  const h = random(20, 35);
 
-      // Reset streak on any hit
-      streak = 0;
+  obstacles.push({
+    x: width + 20,
+    y: GROUND_Y + player.h - h,
+    w,
+    h,
+    passed: false,
+  });
+}
+
+// --------------------------------------------------
+// Level progression
+// --------------------------------------------------
+function checkLevelProgress() {
+  // Step 1: once target score is reached, stop new spawns
+  if (!stopSpawning && score >= activeTargetScore) {
+    stopSpawning = true;
+  }
+
+  // Step 2: wait until remaining obstacles have cleared
+  if (stopSpawning && obstacles.length === 0) {
+    state = "levelComplete";
+    completeTimer = LEVEL_COMPLETE_DURATION;
+  }
+}
+
+// --------------------------------------------------
+// Collision detection
+// --------------------------------------------------
+function checkCollisions() {
+  for (const o of obstacles) {
+    if (
+      rectsOverlap(player.x, player.y, player.w, player.h, o.x, o.y, o.w, o.h)
+    ) {
+      state = "lose";
       return;
     }
   }
 }
 
-// ── Scoring: spike fully passed the player ────
-function checkScore() {
-  for (const s of spikeManager.spikes) {
-    if (!s.scored && s.x + s.w < player.x) {
-      score++;
-      s.scored = true;
-
-      // During shake: count successful clears toward recovery
-      if (shakeActive) {
-        shakeSuccess++;
-        if (shakeSuccess >= 5) {
-          shakeActive = false;
-          shakeSuccess = 0;
-          misses = 0;
-        }
-      }
-
-      // Outside shake: build streak toward boost
-      if (!shakeActive && !boostActive) {
-        streak++;
-        if (streak >= 5) {
-          boostActive = true;
-          boostTimer = BOOST_DURATION;
-          streak = 0;
-        }
-      }
-    }
-  }
+function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
 }
 
-// ── Near-miss: ground spike barely clears player ─
-// Only tracked for ground spikes (air near-miss feels unfair)
-function checkNearMiss() {
-  for (const s of spikeManager.spikes) {
-    if (s.type !== "ground") continue;
-
-    const closeX = s.x < player.x + player.w + 10 && s.x + s.w > player.x - 10;
-    const closeY = abs(player.y + player.h - s.y) < 10;
-
-    if (closeX && closeY && !s.nearMiss) {
-      intensity = constrain(intensity + 10, 0, MAX_INTENSITY);
-      s.nearMiss = true;
-    }
-  }
-}
-
-// ── Key input ─────────────────────────────────
+// --------------------------------------------------
+// Input
+// --------------------------------------------------
 function keyPressed() {
   if (state === "start") {
     if (keyCode === ENTER) {
-      startScreen = "title"; // reset for next time
+      beginLevel(0);
+    }
+
+    if (key === " " && player.onGround) {
+      player.vy = JUMP_VELOCITY;
+    }
+    return;
+  }
+
+  if (state === "levelIntro") {
+    // optional skip
+    if (keyCode === ENTER) {
       state = "play";
     }
-    if (key === "i" || key === "I") {
-      startScreen = "instructions";
+    return;
+  }
+
+  if (state === "play") {
+    if (key === " " && player.onGround) {
+      player.vy = JUMP_VELOCITY;
     }
-    if ((key === "b" || key === "B") && startScreen === "instructions") {
-      startScreen = "title";
+    return;
+  }
+
+  if (state === "choice") {
+    if (key === "w" || key === "W" || keyCode === UP_ARROW) {
+      lastChoice = "up";
+      advanceToNextLevel();
+      return;
+    }
+
+    if (key === "s" || key === "S" || keyCode === DOWN_ARROW) {
+      lastChoice = "down";
+      advanceToNextLevel();
+      return;
     }
   }
 
-  if (state === "play" && key === " ") {
-    player.jump(boostActive);
-  }
-
-  if ((state === "lose" || state === "play") && (key === "r" || key === "R")) {
-    resetGame();
-    state = "play";
+  if (state === "lose" || state === "gameComplete") {
+    if (key === "r" || key === "R") {
+      resetEntireGame();
+      state = "start";
+    }
   }
 }
