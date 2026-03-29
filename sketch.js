@@ -15,6 +15,8 @@
 const CANVAS_W = 700;
 const CANVAS_H = 300;
 const GROUND_Y = 230;
+const PLATFORM_Y = 200; // used by SpikeManager level 2 bird spawn rules
+const AIR_SPIKE_Y = 110; // used by SpikeManager air spike spawn
 const GRAVITY = 1.0;
 const JUMP_VELOCITY = -14;
 
@@ -54,6 +56,7 @@ let state = "start";
 // "gameComplete"
 
 let player;
+let spikeManager;
 let obstacles = [];
 
 let score = 0; // score for current level
@@ -77,6 +80,7 @@ let activeObstacleSpeed = DEFAULT_OBSTACLE_SPEED;
 // --------------------------------------------------
 function setup() {
   createCanvas(CANVAS_W, CANVAS_H);
+  spikeManager = new SpikeManager();
   resetEntireGame();
 }
 
@@ -104,6 +108,8 @@ function resetEntireGame() {
   completeTimer = 0;
   fadeAlpha = 0;
 
+  if (spikeManager) spikeManager.reset();
+
   loadCurrentLevelSettings();
 }
 
@@ -123,6 +129,8 @@ function resetLevelObjects() {
   stopSpawning = false;
   completeTimer = 0;
   fadeAlpha = 0;
+
+  if (spikeManager) spikeManager.reset();
 }
 
 // --------------------------------------------------
@@ -143,6 +151,11 @@ function loadCurrentLevelSettings() {
 function beginLevel(levelIndex) {
   currentLevel = levelIndex;
   loadCurrentLevelSettings();
+
+  if (spikeManager) {
+    spikeManager.setLevel(currentLevel + 1); // map 0-based index to 1-based level
+  }
+
   resetLevelObjects();
 
   introTimer = LEVEL_INTRO_DURATION;
@@ -188,19 +201,39 @@ function draw() {
 
   if (state === "play") {
     updatePlayer();
-    updateObstacles();
+
+    let gameSpeed = activeObstacleSpeed;
+    if (spikeManager) {
+      spikeManager.update(
+        gameSpeed,
+        intensity,
+        MAX_INTENSITY,
+        stopSpawning,
+        activeSpawnFrames,
+      );
+    }
+
     checkCollisions();
+    checkScore();
+    checkNearMiss();
     checkLevelProgress();
 
     drawHUD();
     drawPlayer();
-    drawObstacles();
+
+    if (spikeManager) {
+      spikeManager.draw(0, 0);
+    } else {
+      drawObstacles();
+    }
+
     return;
   }
 
   if (state === "levelComplete") {
     drawPlayer();
-    drawObstacles();
+    if (spikeManager) spikeManager.draw(0, 0);
+    else drawObstacles();
     drawLevelCompleteScreen();
 
     completeTimer--;
@@ -219,7 +252,8 @@ function draw() {
 
   if (state === "lose") {
     drawPlayer();
-    drawObstacles();
+    if (spikeManager) spikeManager.draw(0, 0);
+    else drawObstacles();
     drawLoseScreen();
     return;
   }
@@ -450,7 +484,8 @@ function checkLevelProgress() {
   }
 
   // Step 2: wait until remaining obstacles have cleared
-  if (stopSpawning && obstacles.length === 0) {
+  const activeSpikes = spikeManager ? spikeManager.spikes : obstacles;
+  if (stopSpawning && activeSpikes.length === 0) {
     state = "levelComplete";
     completeTimer = LEVEL_COMPLETE_DURATION;
   }
@@ -460,9 +495,11 @@ function checkLevelProgress() {
 // Collision detection
 // --------------------------------------------------
 function checkCollisions() {
-  for (const o of obstacles) {
+  const activeSpikes = spikeManager ? spikeManager.spikes : obstacles;
+
+  for (const s of activeSpikes) {
     if (
-      rectsOverlap(player.x, player.y, player.w, player.h, o.x, o.y, o.w, o.h)
+      rectsOverlap(player.x, player.y, player.w, player.h, s.x, s.y, s.w, s.h)
     ) {
       state = "lose";
       return;

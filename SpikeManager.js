@@ -53,14 +53,26 @@ class SpikeManager {
 
   // ── Move + spawn each frame ──────────────────
   // speed — computed in sketch.js and shared with PlatformManager
-  update(speed, intensity, maxIntensity) {
+  update(
+    speed,
+    intensity,
+    maxIntensity,
+    stopSpawning = false,
+    spawnFrames = null,
+  ) {
     this.currentSpeed = speed;
 
-    // LEVEL 2: Increase spawn rate (1.3× more often)
-    let spawnRateBase = 100 - map(intensity, 0, maxIntensity, 0, 30);
-    if (this.level === 2) spawnRateBase *= 0.77; // 1/1.3 ≈ 0.77
+    if (!stopSpawning) {
+      // LEVEL 2: Increase spawn rate (1.3× more often)
+      let spawnRateBase =
+        spawnFrames != null
+          ? spawnFrames
+          : 100 - map(intensity, 0, maxIntensity, 0, 30);
 
-    if (frameCount % floor(spawnRateBase) === 0) this._spawn();
+      if (this.level === 2) spawnRateBase *= 0.77; // 1/1.3 ≈ 0.77
+
+      if (frameCount % floor(max(1, spawnRateBase)) === 0) this._spawn();
+    }
 
     for (const s of this.spikes) {
       // Existing obstacles: horizontal movement
