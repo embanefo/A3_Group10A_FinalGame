@@ -11,6 +11,11 @@
              Safe on the ground; dangerous on a
              platform. Player must jump over or
              drop off the platform in time.
+  "bird"   — (Level 2) small, fast, horizontal
+             movement. Spawns at height with gap
+             for slide mechanic.
+  "plane"  — (Level 2) large, slower, diagonal
+             motion (top-right → bottom-left).
 
   ── Tuning knobs ──────────────────────────────
   AIR_CHANCE         — probability a new spike is
@@ -19,6 +24,11 @@
                        spikes appear as intensity rises
   speed is passed IN from sketch.js so platforms
   and spikes always scroll at the same rate.
+
+  ── Level System ───────────────────────────────
+  Level 1: ground + air spikes only
+  Level 2: birds + planes (1.3× spawn rate)
+           Use setLevel(2) to switch modes
 */
 
 const AIR_CHANCE = 0.35; // 35% of spawns are air spikes
@@ -27,6 +37,12 @@ class SpikeManager {
   constructor() {
     this.spikes = [];
     this.currentSpeed = 7; // exposed so PlatformManager can read it
+    this.level = 1; // Level support (1 = default, 2 = increased difficulty)
+  }
+
+  // ── Set level (1 or 2) ───────────────────────
+  setLevel(level) {
+    this.level = level;
   }
 
   // ── Clear on game reset ──────────────────────
@@ -40,10 +56,27 @@ class SpikeManager {
   update(speed, intensity, maxIntensity) {
     this.currentSpeed = speed;
 
-    const spawnRate = 100 - map(intensity, 0, maxIntensity, 0, 30);
-    if (frameCount % floor(spawnRate) === 0) this._spawn();
+    // LEVEL 2: Increase spawn rate (1.3× more often)
+    let spawnRateBase = 100 - map(intensity, 0, maxIntensity, 0, 30);
+    if (this.level === 2) spawnRateBase *= 0.77; // 1/1.3 ≈ 0.77
 
-    for (const s of this.spikes) s.x -= speed;
+    if (frameCount % floor(spawnRateBase) === 0) this._spawn();
+
+    for (const s of this.spikes) {
+      // Existing obstacles: horizontal movement
+      if (s.type === "ground" || s.type === "air") {
+        s.x -= speed;
+      }
+      // LEVEL 2: Birds move horizontally (fast) using vx
+      else if (s.type === "bird") {
+        s.x += s.vx; // vx is negative, so moves left faster
+      }
+      // LEVEL 2: Planes move diagonally
+      else if (s.type === "plane") {
+        s.x += s.vx; // diagonal x
+        s.y += s.vy; // diagonal y
+      }
+    }
 
     // Cull spikes that have scrolled off the left edge
     this.spikes = this.spikes.filter((s) => s.x + s.w > 0);
@@ -51,10 +84,28 @@ class SpikeManager {
 
   // ── Spawn a ground or air spike ──────────────
   _spawn() {
-    if (random() < AIR_CHANCE) {
-      this._spawnAir();
-    } else {
-      this._spawnGround();
+    if (this.level === 1) {
+      // Level 1: only ground and air spikes
+      if (random() < AIR_CHANCE) {
+        this._spawnAir();
+      } else {
+        this._spawnGround();
+      }
+    }
+    // ── LEVEL 2: New obstacle types ──────────────
+    else if (this.level === 2) {
+      // Level 2: prefer birds and planes over regular spikes
+      const r = random();
+      if (r < 0.6) {
+        // 60% birds
+        this._spawnBird();
+      } else if (r < 0.95) {
+        // 35% planes
+        this._spawnPlane();
+      } else {
+        // 5% air spikes for variety
+        this._spawnAir();
+      }
     }
   }
 
@@ -81,6 +132,36 @@ class SpikeManager {
     const h = random(50, 70);
     const w = random(28, 40);
     this.spikes.push(new Spike(width + 20, AIR_SPIKE_Y, w, h, "air"));
+  }
+
+  // ── LEVEL 2: Bird ────────────────────────────
+  // Small, fast, moves horizontally
+  // Spawns at varying Y heights ABOVE the player,
+  // leaving enough gap for a slide mechanic
+  _spawnBird() {
+    const w = 20;
+    const h = 15;
+    // Spawn in upper half, well above platform (min 100px gap)
+    const minY = 50;
+    const maxY = PLATFORM_Y - 100; // leave gap for slide
+    const y = random(minY, maxY);
+    const bird = new Spike(width + 20, y, w, h, "bird");
+    // Birds move 1.3× faster than normal obstacles
+    bird.vx = -(this.currentSpeed * 1.3);
+    this.spikes.push(bird);
+  }
+
+  // ── LEVEL 2: Plane ──────────────────────────
+  // Large, slower, moves diagonally top-right to bottom-left
+  _spawnPlane() {
+    const w = 50;
+    const h = 30;
+    const y = random(30, height / 2);
+    const plane = new Spike(width + 50, y, w, h, "plane");
+    // Plane velocity: diagonal motion (slower than birds)
+    plane.vx = -(this.currentSpeed * 0.7);
+    plane.vy = this.currentSpeed * 0.5; // moves down-left
+    this.spikes.push(plane);
   }
 
   // ── Draw all spikes ──────────────────────────
