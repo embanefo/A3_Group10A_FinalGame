@@ -15,8 +15,6 @@
 const CANVAS_W = 700;
 const CANVAS_H = 300;
 const GROUND_Y = 230;
-const PLATFORM_Y = 200; // used by SpikeManager level 2 bird spawn rules
-const AIR_SPIKE_Y = 110; // used by SpikeManager air spike spawn
 const GRAVITY = 1.0;
 const JUMP_VELOCITY = -14;
 
@@ -80,7 +78,6 @@ let activeObstacleSpeed = DEFAULT_OBSTACLE_SPEED;
 // --------------------------------------------------
 function setup() {
   createCanvas(CANVAS_W, CANVAS_H);
-  spikeManager = new SpikeManager();
   resetEntireGame();
 }
 
@@ -107,8 +104,6 @@ function resetEntireGame() {
   introTimer = 0;
   completeTimer = 0;
   fadeAlpha = 0;
-
-  if (spikeManager) spikeManager.reset();
 
   loadCurrentLevelSettings();
 }
