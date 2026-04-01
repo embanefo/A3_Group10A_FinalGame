@@ -1,7 +1,7 @@
 /*
   Spike.js
   ─────────────────────────────────────────────
-  A single spike obstacle. Supports four types:
+  A single spike obstacle. Supports two types:
 
   "ground" — sits on the floor, tip points UP.
              Player must jump over it.
@@ -9,21 +9,11 @@
   "air"    — hangs from above, tip points DOWN.
              Dangerous when the player is on a
              platform; safe when on the ground.
-             Drawn in dark blue.
+             Drawn in red so it reads differently.
 
-  "bird"   — (Level 2) small yellow oval, moves
-             horizontally, spawns above platform.
-             Player can slide under with timing.
-
-  "plane"  — (Level 2) large grey rectangle,
-             moves diagonally (top-right to
-             bottom-left using vx, vy.
-
-  The bounding box (x, y, w, h) works for all:
+  The bounding box (x, y, w, h) works for both:
     ground: y = top of spike, y+h = base on floor
     air:    y = top (near screen top), y+h = tip
-    bird:   y = top, y+h = bottom (moves via vx)
-    plane:  y = top, y+h = bottom (moves via vx, vy)
 
   Collision logic lives in sketch.js.
 */
@@ -34,11 +24,7 @@ class Spike {
     this.y = y;
     this.w = w;
     this.h = h;
-    this.type = type; // "ground" | "air" | "bird" | "plane"
-
-    // For Level 2 obstacles: diagonal movement
-    this.vx = 0; // velocity x
-    this.vy = 0; // velocity y
+    this.type = type; // "ground" | "air"
 
     // Flags set by sketch.js collision checks
     this.scored = false;
